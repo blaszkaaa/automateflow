@@ -25,6 +25,11 @@ import {
   Code2,
   FileText,
   Globe2,
+  MousePointerClick,
+  Keyboard,
+  TextCursorInput,
+  ScanText,
+  MonitorPlay,
   Braces,
   Copy,
   AlertCircle,
@@ -38,7 +43,7 @@ import {
   X,
 } from "lucide-react";
 
-type Kind = "start" | "setText" | "uppercase" | "append" | "httpGet" | "jsonField" | "end";
+type Kind = "start" | "setText" | "uppercase" | "append" | "httpGet" | "jsonField" | "browserNavigate" | "browserClick" | "browserFill" | "browserPress" | "browserRead" | "end";
 type WorkflowRecord = {
   id: string;
   name: string;
@@ -62,6 +67,11 @@ const blocks: { kind: Kind; label: string; details: string }[] = [
   { kind: "append", label: "Append text", details: "Add to a value" },
   { kind: "httpGet", label: "HTTP GET", details: "Fetch HTTPS data" },
   { kind: "jsonField", label: "Extract JSON", details: "Pick a JSON field" },
+  { kind: "browserNavigate", label: "Open page", details: "Launch Chromium" },
+  { kind: "browserClick", label: "Click element", details: "Click CSS selector" },
+  { kind: "browserFill", label: "Fill input", details: "Enter text into a field" },
+  { kind: "browserPress", label: "Press key", details: "Send Enter, Tab or Escape" },
+  { kind: "browserRead", label: "Read page text", details: "Extract content from page" },
   { kind: "end", label: "End", details: "Finish execution" },
 ];
 
@@ -75,7 +85,16 @@ function createNode(kind: Kind, count: number): Node {
     id: crypto.randomUUID(),
     type: "step",
     position: { x: 110 + count * 34, y: 100 + count * 38 },
-    data: { kind, label: block.label, value: kind === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : kind === "jsonField" ? "title" : "" },
+    data: {
+      kind, label: block.label,
+      value: kind === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1"
+        : kind === "jsonField" ? "title"
+        : kind === "browserNavigate" ? "https://demo.playwright.dev/todomvc/" : "",
+      selector: ["browserFill", "browserPress"].includes(kind) ? ".new-todo"
+        : kind === "browserRead" ? ".todo-list li" : "",
+      text: kind === "browserFill" ? "Prepare portfolio demo" : "",
+      key: "Enter",
+    },
   };
 }
 
@@ -88,7 +107,11 @@ function StudioNode({ data, selected }: NodeProps) {
       {kind !== "start" && <Handle type="target" position={Position.Left} />}
       <div className="node-top"><span className="node-dot" /><span>{label}</span></div>
       <div className="node-description">
-        {["setText", "append", "httpGet", "jsonField"].includes(kind) ? (value || "Configure step...") : kind === "start" ? "Entry point" : kind === "end" ? "Workflow complete" : "Transform to uppercase"}
+        {["setText", "append", "httpGet", "jsonField", "browserNavigate"].includes(kind)
+          ? (value || "Configure step...")
+          : kind.startsWith("browser")
+            ? (String(data.selector || "Configure CSS selector..."))
+            : kind === "start" ? "Entry point" : kind === "end" ? "Workflow complete" : "Transform to uppercase"}
       </div>
       {kind !== "end" && <Handle type="source" position={Position.Right} />}
     </div>
@@ -200,10 +223,12 @@ export default function Home() {
     finally { setBusy(false); }
   };
 
-  const createWorkflow = async (template: "blank" | "api" = "blank") => {
+  const createWorkflow = async (template: "blank" | "api" | "browser" = "blank") => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const kinds: Kind[] = template === "api" ? ["start", "httpGet", "jsonField", "uppercase", "end"] : ["start", "end"];
+      const kinds: Kind[] = template === "api" ? ["start", "httpGet", "jsonField", "uppercase", "end"]
+        : template === "browser" ? ["start", "browserNavigate", "browserFill", "browserPress", "browserRead", "end"]
+        : ["start", "end"];
       const newNodes = kinds.map((kind, index) => ({
         ...createNode(kind, index),
         position: { x: 85 + index * 255, y: 185 }
@@ -214,7 +239,7 @@ export default function Home() {
       }));
       const created = await api<WorkflowRecord>("/workflows", {
         method: "POST",
-        body: JSON.stringify({ name: template === "api" ? "API → JSON demo" : "New automation", nodes: newNodes, edges: newEdges }),
+        body: JSON.stringify({ name: template === "api" ? "API → JSON demo" : template === "browser" ? "Browser → TodoMVC demo" : "New automation", nodes: newNodes, edges: newEdges }),
       });
       setWorkflows((items) => [created, ...items]);
       setActiveId(created.id);
@@ -254,10 +279,10 @@ export default function Home() {
     finally { setBusy(false); }
   };
 
-  const updateText = (value: string) => {
+  const updateField = (field: "value" | "selector" | "text" | "key", value: string) => {
     if (!selectedId) return;
     setNodes((items) => items.map((item) => item.id === selectedId
-      ? { ...item, data: { ...item.data, value } }
+      ? { ...item, data: { ...item.data, [field]: value } }
       : item));
   };
 
@@ -282,8 +307,11 @@ export default function Home() {
             </button>
           ))}
         </div>
-        <button className="demo-button" onClick={() => createWorkflow("api")} disabled={busy}><Globe2 size={16} /> Create API demo <ArrowRight size={14} /></button>
-        <div className="sidebar-bottom"><span className="status-light" /> Local automation workspace <small>Portfolio MVP · v0.2</small></div>
+        <div className="demo-templates">
+          <button className="demo-button" onClick={() => createWorkflow("api")} disabled={busy}><Globe2 size={16} /> Create API demo <ArrowRight size={14} /></button>
+          <button className="demo-button" onClick={() => createWorkflow("browser")} disabled={busy}><MonitorPlay size={16} /> Create browser demo <ArrowRight size={14} /></button>
+        </div>
+        <div className="sidebar-bottom"><span className="status-light" /> Local automation workspace <small>Portfolio MVP · v0.3</small></div>
       </aside>
 
       <main className="main">
@@ -302,7 +330,17 @@ export default function Home() {
             <p className="panel-hint">Add a block and connect it to another step.</p>
             {blocks.map((block) => (
               <button key={block.kind} className="palette-item" onClick={() => setNodes((items) => [...items, createNode(block.kind, items.length)])}>
-                <span className={"palette-icon icon-" + block.kind}>{block.kind === "start" ? <CirclePlay size={17} /> : block.kind === "end" ? <Check size={17} /> : block.kind === "uppercase" ? <Code2 size={17} /> : block.kind === "append" ? <Plus size={17} /> : block.kind === "httpGet" ? <Globe2 size={17} /> : block.kind === "jsonField" ? <Braces size={17} /> : <FileText size={17} />}</span>
+                <span className={"palette-icon icon-" + block.kind}>{block.kind === "start" ? <CirclePlay size={17} />
+                  : block.kind === "end" ? <Check size={17} />
+                  : block.kind === "uppercase" ? <Code2 size={17} />
+                  : block.kind === "append" ? <Plus size={17} />
+                  : block.kind === "httpGet" ? <Globe2 size={17} />
+                  : block.kind === "jsonField" ? <Braces size={17} />
+                  : block.kind === "browserNavigate" ? <MonitorPlay size={17} />
+                  : block.kind === "browserClick" ? <MousePointerClick size={17} />
+                  : block.kind === "browserFill" ? <TextCursorInput size={17} />
+                  : block.kind === "browserPress" ? <Keyboard size={17} />
+                  : block.kind === "browserRead" ? <ScanText size={17} /> : <FileText size={17} />}</span>
                 <span><strong>{block.label}</strong><small>{block.details}</small></span>
                 <Plus className="palette-add" size={15} />
               </button>
@@ -338,16 +376,47 @@ export default function Home() {
               <div className="inspector-content">
                 <span className="eyebrow">STEP SETTINGS</span><h3>{String(selected.data.label)}</h3>
                 <div className="field"><label>Step type</label><div className="field-readonly">{nodeKind(selected)}</div></div>
-                {["setText", "append", "httpGet", "jsonField"].includes(nodeKind(selected)) ? (
+                {["setText", "append", "httpGet", "jsonField", "browserNavigate"].includes(nodeKind(selected)) ? (
                   <div className="field">
-                    <label>{nodeKind(selected) === "setText" ? "Text value" : nodeKind(selected) === "append" ? "Text to append" : nodeKind(selected) === "httpGet" ? "HTTPS URL" : "JSON field path"}</label>
-                    <textarea rows={nodeKind(selected) === "httpGet" ? 3 : 5}
-                      maxLength={nodeKind(selected) === "httpGet" ? 2048 : 4000}
-                      placeholder={nodeKind(selected) === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : nodeKind(selected) === "jsonField" ? "user.name" : "Enter text..."}
-                      value={String(selected.data.value || "")} onChange={(event) => updateText(event.target.value)} />
-                    <small>{nodeKind(selected) === "httpGet" ? "Read-only request · server allowlist · 6s timeout" : nodeKind(selected) === "jsonField" ? "Dot-separated fields; array index supported (items.0.name)" : "This value is used during execution."}</small>
+                    <label>{nodeKind(selected) === "setText" ? "Text value" : nodeKind(selected) === "append" ? "Text to append" : nodeKind(selected) === "httpGet" || nodeKind(selected) === "browserNavigate" ? "HTTPS URL" : "JSON field path"}</label>
+                    <textarea rows={["httpGet", "browserNavigate"].includes(nodeKind(selected)) ? 3 : 5}
+                      maxLength={["httpGet", "browserNavigate"].includes(nodeKind(selected)) ? 2048 : 4000}
+                      placeholder={nodeKind(selected) === "browserNavigate" ? "https://demo.playwright.dev/todomvc/" : nodeKind(selected) === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : nodeKind(selected) === "jsonField" ? "user.name" : "Enter text..."}
+                      value={String(selected.data.value || "")} onChange={(event) => updateField("value", event.target.value)} />
+                    <small>{nodeKind(selected) === "httpGet" ? "Read-only request · server allowlist · 6s timeout"
+                        : nodeKind(selected) === "browserNavigate" ? "Headless Chromium · allowlisted HTTPS websites only"
+                        : nodeKind(selected) === "jsonField" ? "Dot-separated fields; array index supported (items.0.name)"
+                        : "This value is used during execution."}</small>
                   </div>
-                ) : <p className="empty-hint">This step does not require configuration.</p>}
+                ) : null}
+                {["browserClick", "browserFill", "browserPress", "browserRead"].includes(nodeKind(selected)) && (
+                  <div className="field">
+                    <label>CSS selector</label>
+                    <input className="step-input" maxLength={200} placeholder=".new-todo or #submit"
+                      value={String(selected.data.selector || "")} onChange={(event) => updateField("selector", event.target.value)} />
+                    <small>Use CSS selectors. Add Open page earlier in the workflow.</small>
+                  </div>
+                )}
+                {nodeKind(selected) === "browserFill" && (
+                  <div className="field">
+                    <label>Text to enter</label>
+                    <textarea rows={4} maxLength={1000}
+                      value={String(selected.data.text || "")} onChange={(event) => updateField("text", event.target.value)} />
+                  </div>
+                )}
+                {nodeKind(selected) === "browserPress" && (
+                  <div className="field">
+                    <label>Key</label>
+                    <select className="step-input"
+                      value={String(selected.data.key || "Enter")}
+                      onChange={(event) => updateField("key", event.target.value)}>
+                      {["Enter", "Tab", "Escape", "Space", "ArrowDown", "ArrowUp"].map((key) => <option key={key} value={key}>{key}</option>)}
+                    </select>
+                  </div>
+                )}
+                {!["setText", "append", "httpGet", "jsonField", "browserNavigate", "browserClick", "browserFill", "browserPress", "browserRead"].includes(nodeKind(selected)) && (
+                  <p className="empty-hint">This step does not require configuration.</p>
+                )}
                 <button className="delete-button" onClick={removeNode}><Trash2 size={15} /> Delete step</button>
               </div>
             ) : <div className="empty-inspector"><span className="empty-icon"><Layers2 size={25} /></span><h3>Configure steps</h3><p>Select a block on the canvas to edit its settings.</p></div> : (

@@ -1,10 +1,12 @@
-"""Validated linear workflow runner with per-step success and failure traces."""
+"""Validated linear workflow runner with inspectable success/failure traces."""
 
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from typing import Any, Callable
 
+from .browser import BrowserSession, BrowserStepError
 from .http_client import HTTPRequestError, secure_http_get
 
 LABELS = {
@@ -14,6 +16,11 @@ LABELS = {
     "append": "Append text",
     "httpGet": "HTTP GET",
     "jsonField": "Extract JSON field",
+    "browserNavigate": "Open page",
+    "browserClick": "Click element",
+    "browserFill": "Fill input",
+    "browserPress": "Press key",
+    "browserRead": "Read page text",
     "end": "End",
 }
 MAX_NODES = 25
@@ -25,13 +32,11 @@ class InvalidWorkflow(ValueError):
 
 
 class StepExecutionError(ValueError):
-    """An individual step failed, but its trace can still be persisted."""
+    """A workflow step is configured incorrectly."""
 
 
 def extract_json_field(text: str, path: str) -> str:
-    if not path or len(path) > 250 or not all(
-        part and part != ".." for part in path.split(".")
-    ):
+    if not path or len(path) > 250 or not all(part and part != ".." for part in path.split(".")):
         raise StepExecutionError("Enter a dot-separated JSON path, e.g. user.name.")
     try:
         current: Any = json.loads(text)
@@ -76,7 +81,6 @@ def ordered_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> l
 
     if len(starts) != 1 or len(ends) != 1:
         raise InvalidWorkflow("Exactly one Start and one End step are required.")
-
     successor: dict[str, str] = {}
     incoming: set[str] = set()
     for edge in edges:
@@ -89,7 +93,6 @@ def ordered_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> l
             raise InvalidWorkflow("Only one incoming and outgoing connection per step is supported.")
         successor[source] = target
         incoming.add(target)
-
     if starts[0] in incoming or ends[0] in successor:
         raise InvalidWorkflow("Start must be first and End must be last.")
 
@@ -102,7 +105,6 @@ def ordered_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> l
         if current not in successor:
             break
         current = successor[current]
-
     if len(seen) != len(nodes) or ordered[-1]["id"] != ends[0]:
         raise InvalidWorkflow("The workflow contains a cycle or disconnected steps.")
     return ordered
@@ -112,40 +114,61 @@ def execute_workflow(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
     http_get: Callable[[str], str] = secure_http_get,
+    browser_factory: Callable[[], BrowserSession] = BrowserSession,
 ) -> dict[str, Any]:
     ordered = ordered_nodes(nodes, edges)
     value = ""
     history: list[dict[str, str]] = []
-    for node in ordered:
-        data = node["data"]
-        kind = data["kind"]
-        before = value
-        argument = data.get("value", "")
-        try:
-            if kind in ("setText", "append", "httpGet", "jsonField"):
-                limit = 2048 if kind == "httpGet" else MAX_TEXT
-                if not isinstance(argument, str) or len(argument) > limit:
-                    raise StepExecutionError("Invalid step configuration.")
-            if kind == "setText":
-                value = argument
-            elif kind == "uppercase":
-                value = value.upper()
-            elif kind == "append":
-                value += argument
-            elif kind == "httpGet":
-                value = http_get(argument)
-            elif kind == "jsonField":
-                value = extract_json_field(value, argument)
-            if len(value) > MAX_TEXT:
-                raise StepExecutionError("Output exceeds 4,000 characters.")
-        except (StepExecutionError, HTTPRequestError, ValueError) as exc:
+    browser: BrowserSession | None = None
+
+    # Browser is started only if a Navigate step occurs, and always closed.
+    with ExitStack() as resources:
+        for node in ordered:
+            data = node["data"]
+            kind = data["kind"]
+            before = value
+            argument = data.get("value", "")
+            try:
+                if kind in ("setText", "append", "httpGet", "jsonField", "browserNavigate"):
+                    limit = 2048 if kind in ("httpGet", "browserNavigate") else MAX_TEXT
+                    if not isinstance(argument, str) or len(argument) > limit:
+                        raise StepExecutionError("Invalid step configuration.")
+                if kind == "setText":
+                    value = argument
+                elif kind == "uppercase":
+                    value = value.upper()
+                elif kind == "append":
+                    value += argument
+                elif kind == "httpGet":
+                    value = http_get(argument)
+                elif kind == "jsonField":
+                    value = extract_json_field(value, argument)
+                elif kind == "browserNavigate":
+                    if browser is None:
+                        browser = resources.enter_context(browser_factory())
+                    value = browser.navigate(argument)
+                elif kind in ("browserClick", "browserFill", "browserPress", "browserRead"):
+                    if browser is None:
+                        raise StepExecutionError("Add an Open page step before browser actions.")
+                    selector = data.get("selector", "")
+                    if kind == "browserClick":
+                        value = browser.click(selector)
+                    elif kind == "browserFill":
+                        value = browser.fill(selector, data.get("text", ""))
+                    elif kind == "browserPress":
+                        value = browser.press(selector, data.get("key", "Enter"))
+                    else:
+                        value = browser.read_text(selector)
+                if len(value) > MAX_TEXT:
+                    raise StepExecutionError("Output exceeds 4,000 characters.")
+            except (StepExecutionError, HTTPRequestError, BrowserStepError, ValueError) as exc:
+                history.append({
+                    "node_id": node["id"], "label": LABELS[kind], "input": before,
+                    "output": "", "status": "failed", "error": str(exc),
+                })
+                return {"status": "failed", "output": before, "steps": history}
             history.append({
-                "node_id": node["id"], "label": LABELS[kind], "input": before,
-                "output": "", "status": "failed", "error": str(exc)
+                "node_id": node["id"], "label": LABELS[kind],
+                "input": before, "output": value, "status": "success",
             })
-            return {"status": "failed", "output": before, "steps": history}
-        history.append({
-            "node_id": node["id"], "label": LABELS[kind],
-            "input": before, "output": value, "status": "success"
-        })
     return {"status": "success", "output": value, "steps": history}
