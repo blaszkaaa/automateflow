@@ -25,3 +25,40 @@ def test_custom_allowlist(monkeypatch):
     assert validated_url("https://api.example.org/v1") == "https://api.example.org/v1"
     with pytest.raises(HTTPRequestError):
         validated_url("https://jsonplaceholder.typicode.com")
+
+
+
+def test_reject_redirect_without_contacting_target(monkeypatch):
+    import httpx
+    from app.http_client import secure_http_get
+
+    original_client = httpx.Client
+
+    def make_client(*args, **kwargs):
+        assert kwargs["follow_redirects"] is False
+        assert kwargs["trust_env"] is False
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(302, headers={"Location": "http://localhost/private"})
+        )
+        return original_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr("app.http_client.httpx.Client", make_client)
+    with pytest.raises(HTTPRequestError, match="Redirect"):
+        secure_http_get("https://jsonplaceholder.typicode.com/redirect")
+
+
+def test_reject_oversized_response(monkeypatch):
+    import httpx
+    from app.http_client import secure_http_get
+
+    original_client = httpx.Client
+
+    def make_client(*args, **kwargs):
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"x" * 4001)
+        )
+        return original_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr("app.http_client.httpx.Client", make_client)
+    with pytest.raises(HTTPRequestError, match="exceeds"):
+        secure_http_get("https://jsonplaceholder.typicode.com/large")
