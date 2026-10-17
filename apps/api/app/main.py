@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, DateTime, ForeignKey, String, create_engine, select
+from sqlalchemy import JSON, DateTime, ForeignKey, String, create_engine, delete, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .engine import InvalidWorkflow, execute_workflow
@@ -178,7 +178,7 @@ def execute(workflow_id: str, db: Session = Depends(session)):
     run = WorkflowRun(
         id=str(uuid4()),
         workflow_id=item.id,
-        status="success",
+        status=result["status"],
         output=result["output"],
         steps=result["steps"],
     )
@@ -186,3 +186,13 @@ def execute(workflow_id: str, db: Session = Depends(session)):
     db.commit()
     db.refresh(run)
     return run_dict(run)
+
+
+@app.delete("/api/workflows/{workflow_id}", status_code=204)
+def delete_workflow(workflow_id: str, db: Session = Depends(session)):
+    workflow = db.get(Workflow, workflow_id)
+    if workflow is None:
+        raise HTTPException(404, "Workflow not found")
+    db.execute(delete(WorkflowRun).where(WorkflowRun.workflow_id == workflow_id))
+    db.delete(workflow)
+    db.commit()
