@@ -24,6 +24,10 @@ import {
   Clock3,
   Code2,
   FileText,
+  Globe2,
+  Braces,
+  Copy,
+  AlertCircle,
   GitBranch,
   Layers2,
   Plus,
@@ -34,7 +38,7 @@ import {
   X,
 } from "lucide-react";
 
-type Kind = "start" | "setText" | "uppercase" | "append" | "end";
+type Kind = "start" | "setText" | "uppercase" | "append" | "httpGet" | "jsonField" | "end";
 type WorkflowRecord = {
   id: string;
   name: string;
@@ -42,7 +46,7 @@ type WorkflowRecord = {
   edges: Edge[];
   created_at: string;
 };
-type RunStep = { node_id: string; label: string; input: string; output: string; status: string };
+type RunStep = { node_id: string; label: string; input: string; output: string; status: "success" | "failed"; error?: string };
 type RunRecord = {
   id: string;
   status: string;
@@ -56,6 +60,8 @@ const blocks: { kind: Kind; label: string; details: string }[] = [
   { kind: "setText", label: "Set text", details: "Define a value" },
   { kind: "uppercase", label: "Uppercase", details: "Transform text" },
   { kind: "append", label: "Append text", details: "Add to a value" },
+  { kind: "httpGet", label: "HTTP GET", details: "Fetch HTTPS data" },
+  { kind: "jsonField", label: "Extract JSON", details: "Pick a JSON field" },
   { kind: "end", label: "End", details: "Finish execution" },
 ];
 
@@ -69,7 +75,7 @@ function createNode(kind: Kind, count: number): Node {
     id: crypto.randomUUID(),
     type: "step",
     position: { x: 110 + count * 34, y: 100 + count * 38 },
-    data: { kind, label: block.label, value: "" },
+    data: { kind, label: block.label, value: kind === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : kind === "jsonField" ? "title" : "" },
   };
 }
 
@@ -82,7 +88,7 @@ function StudioNode({ data, selected }: NodeProps) {
       {kind !== "start" && <Handle type="target" position={Position.Left} />}
       <div className="node-top"><span className="node-dot" /><span>{label}</span></div>
       <div className="node-description">
-        {kind === "setText" || kind === "append" ? (value || "Configure text...") : kind === "start" ? "Entry point" : kind === "end" ? "Workflow complete" : "Transform to uppercase"}
+        {["setText", "append", "httpGet", "jsonField"].includes(kind) ? (value || "Configure step...") : kind === "start" ? "Entry point" : kind === "end" ? "Workflow complete" : "Transform to uppercase"}
       </div>
       {kind !== "end" && <Handle type="source" position={Position.Right} />}
     </div>
@@ -101,6 +107,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     const body = await response.json().catch(() => ({}));
     throw new Error(typeof body.detail === "string" ? body.detail : "Request failed (" + response.status + ")");
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -117,6 +124,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
   const active = useMemo(() => workflows.find((item) => item.id === activeId), [workflows, activeId]);
   const selected = nodes.find((item) => item.id === selectedId);
@@ -138,6 +146,7 @@ export default function Home() {
     setEdges(item.edges);
     setSelectedId(null);
     setActivePanel("config");
+    setExpandedStep(null);
     api<RunRecord[]>("/workflows/" + item.id + "/runs")
       .then((data) => { setRuns(data); setRun(data[0] || null); })
       .catch((e: Error) => setError(e.message));
@@ -147,10 +156,15 @@ export default function Home() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      if (connection.source === connection.target) return;
-      setEdges((current) => addEdge({ ...connection, type: "smoothstep", animated: true }, current));
+      if (!connection.source || !connection.target || connection.source === connection.target) return;
+      if (nodeKind(nodes.find((item) => item.id === connection.source)!) === "end" ||
+          nodeKind(nodes.find((item) => item.id === connection.target)!) === "start") return;
+      setEdges((current) => {
+        const filtered = current.filter((edge) => edge.source !== connection.source && edge.target !== connection.target);
+        return addEdge({ ...connection, type: "smoothstep", animated: true }, filtered);
+      });
     },
-    [setEdges]
+    [nodes, setEdges]
   );
 
   const save = async (): Promise<WorkflowRecord | null> => {
@@ -180,23 +194,62 @@ export default function Home() {
       setRun(result);
       setRuns((items) => [result, ...items].slice(0, 20));
       setActivePanel("history");
-      setNotice("Execution completed");
+      setExpandedStep(null);
+      setNotice(result.status === "success" ? "Execution completed" : "Execution failed — inspect the red step below");
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
 
-  const createWorkflow = async () => {
+  const createWorkflow = async (template: "blank" | "api" = "blank") => {
     setBusy(true); setError(""); setNotice("");
     try {
-      const newNodes = [createNode("start", 0), createNode("end", 1)];
-      newNodes[1].position = { x: 430, y: 100 };
-      const newEdges = [{ id: "start-to-end", source: newNodes[0].id, target: newNodes[1].id, type: "smoothstep" }];
+      const kinds: Kind[] = template === "api" ? ["start", "httpGet", "jsonField", "uppercase", "end"] : ["start", "end"];
+      const newNodes = kinds.map((kind, index) => ({
+        ...createNode(kind, index),
+        position: { x: 85 + index * 255, y: 185 }
+      }));
+      const newEdges = newNodes.slice(0, -1).map((node, index) => ({
+        id: node.id + "-" + newNodes[index + 1].id,
+        source: node.id, target: newNodes[index + 1].id, type: "smoothstep"
+      }));
       const created = await api<WorkflowRecord>("/workflows", {
         method: "POST",
-        body: JSON.stringify({ name: "New automation", nodes: newNodes, edges: newEdges }),
+        body: JSON.stringify({ name: template === "api" ? "API → JSON demo" : "New automation", nodes: newNodes, edges: newEdges }),
       });
       setWorkflows((items) => [created, ...items]);
       setActiveId(created.id);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const duplicateWorkflow = async () => {
+    if (!activeId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const created = await api<WorkflowRecord>("/workflows", {
+        method: "POST",
+        body: JSON.stringify({ name: (name.slice(0, 73) || "Workflow") + " (copy)", nodes, edges }),
+      });
+      setWorkflows((items) => [created, ...items]);
+      setActiveId(created.id);
+      setNotice("Workflow duplicated");
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const deleteWorkflow = async () => {
+    if (!activeId || !window.confirm("Delete this workflow and all its runs? This cannot be undone.")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api<void>("/workflows/" + activeId, { method: "DELETE" });
+      const remaining = workflows.filter((item) => item.id !== activeId);
+      setWorkflows(remaining);
+      setActiveId(remaining[0]?.id || null);
+      if (remaining.length === 0) {
+        setNodes([]); setEdges([]); setName("Untitled workflow");
+        setRuns([]); setRun(null);
+      }
+      setNotice("Workflow deleted");
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -221,7 +274,7 @@ export default function Home() {
         <div className="brand"><span className="brand-icon"><Workflow size={20} /></span><span>automate<span className="brand-strong">flow</span><small>Automation studio</small></span></div>
         <div className="nav-title">WORKSPACE</div>
         <button className="nav-active"><Layers2 size={17} /> Workflows <ChevronDown size={14} className="nav-chevron" /></button>
-        <div className="section-heading"><span>YOUR AUTOMATIONS</span><button aria-label="Create workflow" title="Create workflow" onClick={createWorkflow} disabled={busy}><Plus size={16} /></button></div>
+        <div className="section-heading"><span>YOUR AUTOMATIONS</span><button aria-label="Create workflow" title="Create workflow" onClick={() => createWorkflow()} disabled={busy}><Plus size={16} /></button></div>
         <div className="workflow-list">
           {workflows.map((workflow) => (
             <button key={workflow.id} className={"workflow-item" + (workflow.id === activeId ? " active" : "")} onClick={() => setActiveId(workflow.id)}>
@@ -229,13 +282,14 @@ export default function Home() {
             </button>
           ))}
         </div>
-        <div className="sidebar-bottom"><span className="status-light" /> Local automation workspace <small>Portfolio MVP · v0.1</small></div>
+        <button className="demo-button" onClick={() => createWorkflow("api")} disabled={busy}><Globe2 size={16} /> Create API demo <ArrowRight size={14} /></button>
+        <div className="sidebar-bottom"><span className="status-light" /> Local automation workspace <small>Portfolio MVP · v0.2</small></div>
       </aside>
 
       <main className="main">
         <header className="topbar">
           <div className="breadcrumbs"><span>Workflows</span><ArrowRight size={14} /><strong>{active?.name || "Studio"}</strong></div>
-          <div className="top-actions"><span className="draft-label"><span className="status-light" /> Ready</span><button className="button secondary" disabled={!activeId || busy} onClick={handleSave}><Save size={16} /> Save</button><button className="button primary" disabled={!activeId || busy} onClick={handleRun}><CirclePlay size={17} /> {busy ? "Working..." : "Run workflow"}</button></div>
+          <div className="top-actions"><span className="draft-label"><span className="status-light" /> Ready</span><button className="button secondary" disabled={!activeId || busy} onClick={duplicateWorkflow} title="Duplicate workflow"><Copy size={15} /> Duplicate</button><button className="button secondary delete-workflow" disabled={!activeId || busy} onClick={deleteWorkflow} title="Delete workflow"><Trash2 size={15} /></button><button className="button secondary" disabled={!activeId || busy} onClick={handleSave}><Save size={16} /> Save</button><button className="button primary" disabled={!activeId || busy} onClick={handleRun}><CirclePlay size={17} /> {busy ? "Working..." : "Run workflow"}</button></div>
         </header>
 
         {(error || notice) && <div className={"toast " + (error ? "toast-error" : "toast-ok")}><span>{error || notice}</span><button aria-label="Dismiss" onClick={() => { setError(""); setNotice(""); }}><X size={15} /></button></div>}
@@ -248,7 +302,7 @@ export default function Home() {
             <p className="panel-hint">Add a block and connect it to another step.</p>
             {blocks.map((block) => (
               <button key={block.kind} className="palette-item" onClick={() => setNodes((items) => [...items, createNode(block.kind, items.length)])}>
-                <span className={"palette-icon icon-" + block.kind}>{block.kind === "start" ? <CirclePlay size={17} /> : block.kind === "end" ? <Check size={17} /> : block.kind === "uppercase" ? <Code2 size={17} /> : block.kind === "append" ? <Plus size={17} /> : <FileText size={17} />}</span>
+                <span className={"palette-icon icon-" + block.kind}>{block.kind === "start" ? <CirclePlay size={17} /> : block.kind === "end" ? <Check size={17} /> : block.kind === "uppercase" ? <Code2 size={17} /> : block.kind === "append" ? <Plus size={17} /> : block.kind === "httpGet" ? <Globe2 size={17} /> : block.kind === "jsonField" ? <Braces size={17} /> : <FileText size={17} />}</span>
                 <span><strong>{block.label}</strong><small>{block.details}</small></span>
                 <Plus className="palette-add" size={15} />
               </button>
@@ -284,8 +338,15 @@ export default function Home() {
               <div className="inspector-content">
                 <span className="eyebrow">STEP SETTINGS</span><h3>{String(selected.data.label)}</h3>
                 <div className="field"><label>Step type</label><div className="field-readonly">{nodeKind(selected)}</div></div>
-                {["setText", "append"].includes(nodeKind(selected)) ? (
-                  <div className="field"><label>{nodeKind(selected) === "setText" ? "Text value" : "Text to append"}</label><textarea rows={6} maxLength={4000} placeholder="Enter text..." value={String(selected.data.value || "")} onChange={(event) => updateText(event.target.value)} /><small>This value will be used during execution.</small></div>
+                {["setText", "append", "httpGet", "jsonField"].includes(nodeKind(selected)) ? (
+                  <div className="field">
+                    <label>{nodeKind(selected) === "setText" ? "Text value" : nodeKind(selected) === "append" ? "Text to append" : nodeKind(selected) === "httpGet" ? "HTTPS URL" : "JSON field path"}</label>
+                    <textarea rows={nodeKind(selected) === "httpGet" ? 3 : 5}
+                      maxLength={nodeKind(selected) === "httpGet" ? 2048 : 16000}
+                      placeholder={nodeKind(selected) === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : nodeKind(selected) === "jsonField" ? "user.name" : "Enter text..."}
+                      value={String(selected.data.value || "")} onChange={(event) => updateText(event.target.value)} />
+                    <small>{nodeKind(selected) === "httpGet" ? "Read-only request · server allowlist · 6s timeout" : nodeKind(selected) === "jsonField" ? "Dot-separated fields; array index supported (items.0.name)" : "This value is used during execution."}</small>
+                  </div>
                 ) : <p className="empty-hint">This step does not require configuration.</p>}
                 <button className="delete-button" onClick={removeNode}><Trash2 size={15} /> Delete step</button>
               </div>
@@ -295,7 +356,7 @@ export default function Home() {
                 {runs.length === 0 ? <p className="empty-hint">No runs yet. Execute the workflow to see step-by-step results.</p> : (
                   <div className="run-list">{runs.map((item) => (
                     <button key={item.id} className={"run-item " + (run?.id === item.id ? "run-selected" : "")} onClick={() => setRun(item)}>
-                      <Check size={14} /><span>{new Date(item.created_at).toLocaleString()}</span><small>Success</small>
+                      {item.status === "success" ? <Check size={14} /> : <AlertCircle size={14} className="failed-icon" />}<span>{new Date(item.created_at).toLocaleString()}</span><small className={item.status === "failed" ? "failed-text" : ""}>{item.status === "success" ? "Success" : "Failed"}</small>
                     </button>
                   ))}</div>
                 )}
@@ -306,7 +367,33 @@ export default function Home() {
 
         <section className="console">
           <div className="console-heading"><span><Terminal size={17} /> Execution details</span><span>{run ? "RUN " + run.id.slice(0, 8) : "NO RUN SELECTED"}</span></div>
-          {run ? <div className="console-content"><div className="console-summary"><span className="success-text"><Check size={15} /> Execution successful</span><span>{run.steps.length} steps</span></div><div className="log-table">{run.steps.map((step, index) => <div className="log-row" key={index}><span className="log-index">{String(index + 1).padStart(2, "0")}</span><span className="log-label">{step.label}</span><span className="log-out">{step.output || "—"}</span><span className="log-ok">✓</span></div>)}</div><div className="final-output"><span>FINAL OUTPUT</span><code>{run.output || "(empty string)"}</code></div></div> : <div className="console-placeholder"><Terminal size={17} /> Run a workflow to inspect the execution trace.</div>}
+          {run ? <div className="console-content">
+            <div className="console-summary">
+              <span className={run.status === "success" ? "success-text" : "failed-text"}>
+                {run.status === "success" ? <Check size={15} /> : <AlertCircle size={15} />}
+                {run.status === "success" ? "Execution successful" : "Execution failed"}
+              </span><span>{run.steps.length} executed steps</span>
+            </div>
+            <div className="log-table">
+              {run.steps.map((step, index) => (
+                <div key={index} className="log-entry">
+                  <button className="log-row log-button" onClick={() => setExpandedStep(expandedStep === index ? null : index)}>
+                    <span className="log-index">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="log-label">{step.label}</span>
+                    <span className="log-out">{step.error || step.output || "—"}</span>
+                    <span className={step.status === "failed" ? "failed-text" : "log-ok"}>{step.status === "failed" ? "!" : "✓"}</span>
+                  </button>
+                  {expandedStep === index && (
+                    <div className="step-trace">
+                      <div><strong>INPUT</strong><pre>{step.input || "(empty)"}</pre></div>
+                      <div><strong>{step.error ? "ERROR" : "OUTPUT"}</strong><pre className={step.error ? "failed-text" : ""}>{step.error || step.output || "(empty)"}</pre></div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="final-output"><span>{run.status === "success" ? "FINAL OUTPUT" : "LAST GOOD OUTPUT"}</span><code>{run.output || "(empty string)"}</code></div>
+          </div> : <div className="console-placeholder"><Terminal size={17} /> Run a workflow to inspect the execution trace.</div>}
         </section>
         <footer>AutomateFlow <span>·</span> Built for clarity, designed for automation.</footer>
       </main>
