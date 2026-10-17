@@ -77,4 +77,4 @@ Create a workflow: **Start → HTTP GET → Extract JSON field → Uppercase →
 - Extract JSON field: \`title\` (nested paths like \`user.name\` and \`items.0.id\` also work)
 - Run and inspect the trace to see the response body and extracted data.
 
-Only \`jsonplaceholder.typicode.com\` is allowlisted by default. To use other domains, configure \`HTTP_ALLOWED_HOSTS\` as a comma-separated list on the API container. The demo HTTP node supports GET requests without authentication, with 6-second timeout and maximum 16 KB responses. Keep the platform behind reverse-proxy access control in Dokploy.
+Only \`jsonplaceholder.typicode.com\` is allowlisted by default. To use other domains, configure \`HTTP_ALLOWED_HOSTS\` as a comma-separated list on the API container. The demo HTTP node supports GET requests without authentication, with 6-second timeout and maximum 4 KB responses. Keep the platform behind reverse-proxy access control in Dokploy.
