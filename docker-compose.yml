@@ -19,6 +19,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://automateflow:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/automateflow
+      HTTP_ALLOWED_HOSTS: ${HTTP_ALLOWED_HOSTS:-jsonplaceholder.typicode.com}
     depends_on:
       db:
         condition: service_healthy
@@ -37,7 +38,7 @@ services:
     depends_on:
       - api
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
 
 volumes:
   postgres_data:
