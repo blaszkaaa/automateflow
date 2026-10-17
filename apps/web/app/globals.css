@@ -18,3 +18,21 @@
 .step-trace strong{display:block;color:#8296b5;font-size:10px;letter-spacing:1px;margin:0 0 8px}
 .step-trace pre{margin:0;padding:12px;background:#0a121d;border:1px solid #27384a;border-radius:7px;color:#ccd9ea;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:240px;font-size:11px;line-height:1.6}
 @media(max-width:710px){.demo-button{margin-top:14px}.sidebar-bottom{display:none}.top-actions{flex-wrap:wrap}.topbar{gap:10px}.step-trace{grid-template-columns:1fr}}
+
+/* Portfolio v0.3: browser RPA blocks */
+.palette{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#394660 transparent}
+.demo-templates{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.demo-templates .demo-button{margin-top:0}
+.palette-icon.icon-browserNavigate{background:#1d3b43;color:#88e6eb}
+.palette-icon.icon-browserClick{background:#293653;color:#b0c6ff}
+.palette-icon.icon-browserFill{background:#2b3d32;color:#8be2b2}
+.palette-icon.icon-browserPress{background:#383249;color:#c8b3ff}
+.palette-icon.icon-browserRead{background:#42362c;color:#f0c995}
+.kind-browserNavigate .node-dot{background:#79dbe7}
+.kind-browserClick .node-dot{background:#92aff7}
+.kind-browserFill .node-dot{background:#7adaab}
+.kind-browserPress .node-dot{background:#bca6ea}
+.kind-browserRead .node-dot{background:#eac184}
+.step-input{border:1px solid #313c4f;border-radius:8px;background:#171e2c;color:#cbd6ea;padding:11px;font-size:12px;outline:0;width:100%}
+.step-input:focus{border-color:#8ba6e3}
+@media(max-width:710px){.demo-templates{margin-top:14px}.palette{overflow-x:auto;overflow-y:hidden}}
