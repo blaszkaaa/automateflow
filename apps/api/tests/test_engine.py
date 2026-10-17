@@ -52,7 +52,7 @@ def test_rejects_cycles():
 
 def test_limits_output_size():
     nodes, edges = workflow(["start", "setText", "append", "end"])
-    nodes[1]["data"]["value"] = "a" * 16000
+    nodes[1]["data"]["value"] = "a" * 4000
     result = execute_workflow(nodes, edges)
     assert result["status"] == "failed"
     assert result["steps"][-1]["status"] == "failed"
