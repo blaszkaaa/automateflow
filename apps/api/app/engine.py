@@ -1,25 +1,55 @@
-"""Small, deterministic executor for connected linear workflow graphs."""
+"""Validated linear workflow runner with per-step success and failure traces."""
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Callable
+
+from .http_client import HTTPRequestError, secure_http_get
 
 LABELS = {
     "start": "Start",
     "setText": "Set text",
     "uppercase": "Uppercase",
     "append": "Append text",
+    "httpGet": "HTTP GET",
+    "jsonField": "Extract JSON field",
     "end": "End",
 }
 MAX_NODES = 25
-MAX_TEXT = 4000
+MAX_TEXT = 16_000
 
 
 class InvalidWorkflow(ValueError):
-    """Raised when the workflow topology or data is invalid."""
+    """A graph or a step setting is invalid."""
 
 
-def execute_workflow(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, Any]:
+class StepExecutionError(ValueError):
+    """An individual step failed, but its trace can still be persisted."""
+
+
+def extract_json_field(text: str, path: str) -> str:
+    if not path or len(path) > 250 or not all(
+        part and part != ".." for part in path.split(".")
+    ):
+        raise StepExecutionError("Enter a dot-separated JSON path, e.g. user.name.")
+    try:
+        current: Any = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise StepExecutionError("Input is not valid JSON.") from exc
+    for key in path.split("."):
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        elif isinstance(current, list) and key.isdecimal() and int(key) < len(current):
+            current = current[int(key)]
+        else:
+            raise StepExecutionError(f"JSON path not found: {path}")
+    if isinstance(current, str):
+        return current
+    return json.dumps(current, ensure_ascii=False, separators=(",", ":"))
+
+
+def ordered_nodes(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not 2 <= len(nodes) <= MAX_NODES:
         raise InvalidWorkflow("A workflow must contain between 2 and 25 steps.")
     if len(edges) != len(nodes) - 1:
@@ -29,12 +59,13 @@ def execute_workflow(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -
     starts: list[str] = []
     ends: list[str] = []
     for node in nodes:
-        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str) or not node["id"]:
             raise InvalidWorkflow("Every step needs a valid ID.")
-        node_id = node["id"]
-        kind = node.get("data", {}).get("kind") if isinstance(node.get("data"), dict) else None
+        data = node.get("data")
+        kind = data.get("kind") if isinstance(data, dict) else None
         if kind not in LABELS:
             raise InvalidWorkflow("Unsupported step type: " + str(kind))
+        node_id = node["id"]
         if node_id in by_id:
             raise InvalidWorkflow("Step IDs must be unique.")
         by_id[node_id] = node
@@ -49,6 +80,8 @@ def execute_workflow(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -
     successor: dict[str, str] = {}
     incoming: set[str] = set()
     for edge in edges:
+        if not isinstance(edge, dict):
+            raise InvalidWorkflow("Invalid connection.")
         source, target = edge.get("source"), edge.get("target")
         if source not in by_id or target not in by_id or source == target:
             raise InvalidWorkflow("Invalid connection.")
@@ -72,7 +105,15 @@ def execute_workflow(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -
 
     if len(seen) != len(nodes) or ordered[-1]["id"] != ends[0]:
         raise InvalidWorkflow("The workflow contains a cycle or disconnected steps.")
+    return ordered
 
+
+def execute_workflow(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    http_get: Callable[[str], str] = secure_http_get,
+) -> dict[str, Any]:
+    ordered = ordered_nodes(nodes, edges)
     value = ""
     history: list[dict[str, str]] = []
     for node in ordered:
@@ -80,19 +121,30 @@ def execute_workflow(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -
         kind = data["kind"]
         before = value
         argument = data.get("value", "")
-        if kind in ("setText", "append"):
-            if not isinstance(argument, str) or len(argument) > MAX_TEXT:
-                raise InvalidWorkflow("Step text must be at most 4000 characters.")
-        if kind == "setText":
-            value = argument
-        elif kind == "uppercase":
-            value = value.upper()
-        elif kind == "append":
-            value += argument
-        if len(value) > MAX_TEXT:
-            raise InvalidWorkflow("Output exceeds 4000 characters.")
-        history.append(
-            {"node_id": node["id"], "label": LABELS[kind], "input": before, "output": value, "status": "success"}
-        )
-
-    return {"output": value, "steps": history}
+        try:
+            if kind in ("setText", "append", "httpGet", "jsonField"):
+                if not isinstance(argument, str) or len(argument) > 2048 if kind == "httpGet" else not isinstance(argument, str) or len(argument) > MAX_TEXT:
+                    raise StepExecutionError("Invalid step configuration.")
+            if kind == "setText":
+                value = argument
+            elif kind == "uppercase":
+                value = value.upper()
+            elif kind == "append":
+                value += argument
+            elif kind == "httpGet":
+                value = http_get(argument)
+            elif kind == "jsonField":
+                value = extract_json_field(value, argument)
+            if len(value) > MAX_TEXT:
+                raise StepExecutionError("Output exceeds 16,000 characters.")
+        except (StepExecutionError, HTTPRequestError, ValueError) as exc:
+            history.append({
+                "node_id": node["id"], "label": LABELS[kind], "input": before,
+                "output": "", "status": "failed", "error": str(exc)
+            })
+            return {"status": "failed", "output": before, "steps": history}
+        history.append({
+            "node_id": node["id"], "label": LABELS[kind],
+            "input": before, "output": value, "status": "success"
+        })
+    return {"status": "success", "output": value, "steps": history}
