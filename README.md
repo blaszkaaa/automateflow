@@ -7,14 +7,15 @@ AutomateFlow is a portfolio project demonstrating Python/FastAPI backend develop
 ## Current MVP
 
 - Visual workflow editor: add, connect, reposition, configure and remove steps
-- Steps: Start, Set text, Uppercase, Append text, End
+- Steps: Start, Set text, Uppercase, Append text, HTTP GET, Extract JSON field, End
 - Save workflows in PostgreSQL
 - Execute linear workflows and inspect step-by-step input/output
-- Browse execution history
+- Browse success and failure traces, including the input/output of every step
+- Duplicate and delete workflows
 - Dark dashboard interface built with Next.js and React Flow
 - Docker Compose deployment suitable for Dokploy
 
-This is an intentionally small **functional MVP**, not an n8n replacement. API calls, Playwright workers, scheduling and AI blocks are future enhancements.
+This is an intentionally small **functional MVP**, not an n8n replacement. Playwright workers, scheduling and AI blocks are future enhancements.
 
 ## Quick start
 
@@ -30,7 +31,7 @@ Stop it with `docker compose down`.
 
 Deploy this repository as a **Docker Compose** project. Configure a domain routing to the `web` service on port **3000**, with HTTPS enabled. Provide `DB_PASSWORD` via the Compose environment. The API and database are internal services; only expose the web service. If port 3000 is taken on your VPS, change `WEB_PORT`, or remove the public port mapping and let Dokploy route internally.
 
-**Security:** This MVP has no login or user isolation. Restrict access to your demo using Dokploy/reverse-proxy authentication. Do not expose an unrestricted editor publicly. The available nodes intentionally do not make arbitrary network calls or execute custom code.
+**Security:** This MVP has no login or user isolation. Restrict access to your demo using Dokploy/reverse-proxy authentication. Do not expose an unrestricted editor publicly. The HTTP GET node only accepts HTTPS URLs from an exact hostname allowlist (`HTTP_ALLOWED_HOSTS`), and blocks redirects, credential URLs, IP literals and non-standard ports. It cannot run arbitrary code.
 
 ### Local development (optional)
 
@@ -66,3 +67,14 @@ The executor currently supports a **single connected chain** with one Start node
 ## License
 
 MIT.
+
+
+## HTTP / JSON walkthrough
+
+Create a workflow: **Start → HTTP GET → Extract JSON field → Uppercase → End**.
+
+- HTTP GET URL: \`https://jsonplaceholder.typicode.com/todos/1\`
+- Extract JSON field: \`title\` (nested paths like \`user.name\` and \`items.0.id\` also work)
+- Run and inspect the trace to see the response body and extracted data.
+
+Only \`jsonplaceholder.typicode.com\` is allowlisted by default. To use other domains, configure \`HTTP_ALLOWED_HOSTS\` as a comma-separated list on the API container. The demo HTTP node supports GET requests without authentication, with 6-second timeout and maximum 16 KB responses. Keep the platform behind reverse-proxy access control in Dokploy.
