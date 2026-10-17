@@ -342,7 +342,7 @@ export default function Home() {
                   <div className="field">
                     <label>{nodeKind(selected) === "setText" ? "Text value" : nodeKind(selected) === "append" ? "Text to append" : nodeKind(selected) === "httpGet" ? "HTTPS URL" : "JSON field path"}</label>
                     <textarea rows={nodeKind(selected) === "httpGet" ? 3 : 5}
-                      maxLength={nodeKind(selected) === "httpGet" ? 2048 : 16000}
+                      maxLength={nodeKind(selected) === "httpGet" ? 2048 : 4000}
                       placeholder={nodeKind(selected) === "httpGet" ? "https://jsonplaceholder.typicode.com/todos/1" : nodeKind(selected) === "jsonField" ? "user.name" : "Enter text..."}
                       value={String(selected.data.value || "")} onChange={(event) => updateText(event.target.value)} />
                     <small>{nodeKind(selected) === "httpGet" ? "Read-only request · server allowlist · 6s timeout" : nodeKind(selected) === "jsonField" ? "Dot-separated fields; array index supported (items.0.name)" : "This value is used during execution."}</small>
