@@ -20,7 +20,7 @@ class HTTPRequestError(ValueError):
     """A request was denied, failed or exceeded the configured limits."""
 
 
-def validated_url(url: str) -> str:
+def validated_url(url: str, allowed_hosts: str | None = None) -> str:
     if not isinstance(url, str) or len(url) > 2048:
         raise HTTPRequestError("Enter a valid HTTPS URL (maximum 2048 characters).")
 
@@ -31,9 +31,10 @@ def validated_url(url: str) -> str:
     except ValueError as exc:
         raise HTTPRequestError("Invalid request URL.") from exc
 
-    allowed = {host.strip().lower() for host in os.getenv(
+    configured = allowed_hosts if allowed_hosts is not None else os.getenv(
         "HTTP_ALLOWED_HOSTS", DEFAULT_ALLOWED_HOSTS
-    ).split(",") if host.strip()}
+    )
+    allowed = {host.strip().lower() for host in configured.split(",") if host.strip()}
 
     if parts.scheme != "https" or not hostname or port not in (None, 443):
         raise HTTPRequestError("Only HTTPS URLs using the default port are permitted.")

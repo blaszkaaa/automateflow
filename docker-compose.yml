@@ -20,11 +20,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://automateflow:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/automateflow
       HTTP_ALLOWED_HOSTS: ${HTTP_ALLOWED_HOSTS:-jsonplaceholder.typicode.com}
+      BROWSER_ALLOWED_HOSTS: ${BROWSER_ALLOWED_HOSTS:-demo.playwright.dev}
     depends_on:
       db:
         condition: service_healthy
     expose:
       - "8000"
+    shm_size: "512mb"
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
 
   web:
     build:
