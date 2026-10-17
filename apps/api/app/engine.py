@@ -17,7 +17,7 @@ LABELS = {
     "end": "End",
 }
 MAX_NODES = 25
-MAX_TEXT = 16_000
+MAX_TEXT = 4000
 
 
 class InvalidWorkflow(ValueError):
@@ -137,7 +137,7 @@ def execute_workflow(
             elif kind == "jsonField":
                 value = extract_json_field(value, argument)
             if len(value) > MAX_TEXT:
-                raise StepExecutionError("Output exceeds 16,000 characters.")
+                raise StepExecutionError("Output exceeds 4,000 characters.")
         except (StepExecutionError, HTTPRequestError, ValueError) as exc:
             history.append({
                 "node_id": node["id"], "label": LABELS[kind], "input": before,
