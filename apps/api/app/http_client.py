@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-MAX_RESPONSE_BYTES = 16_000
+MAX_RESPONSE_BYTES = 4000
 DEFAULT_ALLOWED_HOSTS = "jsonplaceholder.typicode.com"
 
 
@@ -65,7 +65,7 @@ def secure_http_get(url: str) -> str:
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_RESPONSE_BYTES:
-                        raise HTTPRequestError("The response exceeds the 16 KB limit.")
+                        raise HTTPRequestError("The response exceeds the 4 KB limit.")
                 return body.decode("utf-8", errors="replace")
     except httpx.HTTPError as exc:
         raise HTTPRequestError(f"HTTP request failed: {type(exc).__name__}") from exc
