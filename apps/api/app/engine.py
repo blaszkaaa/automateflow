@@ -123,7 +123,8 @@ def execute_workflow(
         argument = data.get("value", "")
         try:
             if kind in ("setText", "append", "httpGet", "jsonField"):
-                if not isinstance(argument, str) or len(argument) > 2048 if kind == "httpGet" else not isinstance(argument, str) or len(argument) > MAX_TEXT:
+                limit = 2048 if kind == "httpGet" else MAX_TEXT
+                if not isinstance(argument, str) or len(argument) > limit:
                     raise StepExecutionError("Invalid step configuration.")
             if kind == "setText":
                 value = argument
